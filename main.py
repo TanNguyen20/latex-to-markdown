@@ -1,13 +1,13 @@
-# main.py
 import shutil
 import subprocess
 import tempfile
 import os
+import re
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse
 
 app = FastAPI(title="LaTeX Conversion API")
@@ -15,6 +15,20 @@ app = FastAPI(title="LaTeX Conversion API")
 class ConversionFormat(str, Enum):
     PDF = "pdf"
     MARKDOWN = "markdown"
+
+def sanitize_filename(name: str) -> str:
+    """
+    Security: Removes directory traversals (../) and unsafe characters.
+    Allows: A-Z, a-z, 0-9, -, _, ., and spaces.
+    """
+    # Get just the filename (removes any directory paths like /tmp/)
+    name = os.path.basename(name)
+    # Remove characters that aren't alphanumeric, spaces, dots, dashes, or underscores
+    name = re.sub(r'[^a-zA-Z0-9_\-\. ]', '', name)
+    # Fallback if the name becomes empty after sanitization
+    if not name:
+        return "document"
+    return name
 
 class LatexConverter:
     """
@@ -34,21 +48,17 @@ class LatexConverter:
     def to_pdf(input_path: Path, output_dir: Path) -> Path:
         """
         Converts LaTeX to PDF using Tectonic.
-        Tectonic automatically downloads packages and handles multiple passes.
         """
         try:
-            # Tectonic command: tectonic input.tex --outdir /tmp/dir
             cmd = [
                 "tectonic",
                 str(input_path),
                 "--outdir",
                 str(output_dir),
-                "--print",  # Print output to stdout
-                "--keep-intermediates" # Optional: helps debug if needed
+                "--print", 
+                "--keep-intermediates"
             ]
             subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Tectonic generates the pdf with the same name as input
             return output_dir / "input.pdf"
         
         except subprocess.CalledProcessError as e:
@@ -60,7 +70,7 @@ class LatexConverter:
     @staticmethod
     def to_markdown(input_path: Path, output_dir: Path) -> Path:
         """
-        Converts LaTeX to Markdown using Pandoc.
+        Converts LaTeX to Markdown using Pandoc (GitHub Flavored Markdown).
         """
         import pypandoc
         
@@ -69,7 +79,7 @@ class LatexConverter:
         try:
             pypandoc.convert_file(
                 str(input_path),
-                'gfm',
+                'gfm',  # GitHub Flavored Markdown for better table support
                 outputfile=str(output_path),
                 format='latex',
                 extra_args=['--wrap=none']
@@ -89,39 +99,56 @@ def cleanup_temp_dir(path: str):
 async def convert_latex(
     target_format: ConversionFormat,
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    output_filename: Optional[str] = Query(
+        None, 
+        description="Optional custom filename (without extension). e.g. 'My_Report'"
+    )
 ):
     """
     Upload a .tex file and convert it to PDF or Markdown.
+    If 'output_filename' is not provided, defaults to the original filename.
     """
     if not file.filename.endswith(".tex"):
         raise HTTPException(status_code=400, detail="Only .tex files are supported")
+
+    # 1. Determine Output Filename
+    if output_filename:
+        base_name = sanitize_filename(output_filename)
+    else:
+        # Use original filename (e.g. "thesis.tex" -> "thesis")
+        base_name = Path(file.filename).stem
 
     # Create a unique temporary directory for this request
     temp_dir = tempfile.mkdtemp()
     temp_path = Path(temp_dir)
 
     try:
-        # 1. Save uploaded file
+        # 2. Save uploaded file
         input_path = LatexConverter._save_upload_file(file, temp_path)
         
-        # 2. Convert based on strategy
+        # 3. Convert based on strategy
         if target_format == ConversionFormat.PDF:
             result_path = LatexConverter.to_pdf(input_path, temp_path)
             media_type = "application/pdf"
-            filename = "document.pdf"
+            download_name = f"{base_name}.pdf"
+            
         elif target_format == ConversionFormat.MARKDOWN:
             result_path = LatexConverter.to_markdown(input_path, temp_path)
             media_type = "text/markdown"
-            filename = "document.md"
+            download_name = f"{base_name}.md"
         
-        # 3. Schedule cleanup
+        # 4. Rename file to match requested name (so FileResponse finds it easily)
+        final_path = temp_path / download_name
+        result_path.rename(final_path)
+
+        # 5. Schedule cleanup
         background_tasks.add_task(cleanup_temp_dir, temp_dir)
 
-        # 4. Return file
+        # 6. Return file
         return FileResponse(
-            path=result_path,
-            filename=filename,
+            path=final_path,
+            filename=download_name,
             media_type=media_type
         )
 
