@@ -1,20 +1,14 @@
 FROM python:3.11-slim
 
-# 1. Install System Dependencies
-# Added: 'software-properties-common' and 'contrib' repo to get Microsoft fonts
-# Added: 'ttf-mscorefonts-installer' setup
+# 1. Enable 'contrib' and 'non-free' repositories
+# We use 'sed' to append these components to the source list so we can find the MS fonts.
+RUN sed -i 's/Components: main/Components: main contrib non-free/' /etc/apt/sources.list.d/debian.sources
+
+# 2. Update and Install System Dependencies
+# We pre-accept the Microsoft license so the build doesn't freeze.
 RUN apt-get update && \
-    apt-get install -y software-properties-common && \
-    # Enable contrib and non-free repositories for MS fonts
-    apt-add-repository contrib && \
-    apt-add-repository non-free && \
-    apt-get update
-
-# 2. Pre-accept the Microsoft Font License (REQUIRED for silent install)
-RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections
-
-# 3. Install Dependencies & Fonts
-RUN apt-get install -y \
+    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
+    apt-get install -y \
     pandoc \
     libssl-dev \
     libfontconfig1 \
@@ -26,30 +20,29 @@ RUN apt-get install -y \
     fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. Install Tectonic
+# 3. Install Tectonic
 RUN wget -qO- https://drop-sh.fullyjustified.net | sh && \
     mv tectonic /usr/local/bin/
 
-# 5. Refresh Font Cache
-# This makes sure Tectonic "sees" the new Arial font
+# 4. Refresh Font Cache
+# This registers the new Arial font so Tectonic can see it
 RUN fc-cache -f -v
 
-# 6. Copy Assets (Resume template, etc)
-# Make sure your 'latex_assets' folder exists locally!
+# 5. Copy Assets (Resume template)
 COPY latex_assets ./latex_assets
 
-# 7. Warm up Tectonic (Optional but recommended)
+# 6. Warm up Tectonic
 RUN echo "\\documentclass{article}\\begin{document}Warmup\\end{document}" > warmup.tex && \
     tectonic warmup.tex && \
     rm warmup.tex warmup.pdf
 
-# 8. Install Python Deps
+# 7. Install Python Deps
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 9. Copy Code
+# 8. Copy Code
 COPY . .
 
-# 10. Run
+# 9. Run
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
