@@ -67,12 +67,12 @@ class LatexConverter:
         output_path = output_dir / "output.md"
         
         try:
-            # pypandoc wrapper for: pandoc input.tex -f latex -t markdown -o output.md
             pypandoc.convert_file(
                 str(input_path),
-                'markdown',
+                'gfm',
                 outputfile=str(output_path),
-                format='latex'
+                format='latex',
+                extra_args=['--wrap=none']
             )
             return output_path
             
