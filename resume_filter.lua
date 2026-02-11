@@ -3,15 +3,15 @@ function Pandoc(doc)
     local meta = doc.meta
     local new_blocks = {}
 
-    -- 1. Extract NAME
-    -- Try 'name' (custom) or 'author' (standard)
+    -- 1. Extract NAME (Explicitly check 'name' first, then 'author')
     local name = meta['name'] or meta['author']
     if name then
-        -- stringify ensures we get clean text for the header
+        -- Convert the metadata object to plain text
         local name_text = pandoc.utils.stringify(name)
+        -- Insert as a Level 1 Header (# Name)
         table.insert(new_blocks, pandoc.Header(1, name_text))
         
-        -- Clean up metadata
+        -- Remove from metadata so it doesn't appear in the "ugly table"
         meta['name'] = nil
         meta['author'] = nil
     end
@@ -19,40 +19,34 @@ function Pandoc(doc)
     -- 2. Extract ADDRESS
     local address = meta['address']
     if address then
-        -- Helper function to process a single address entry
-        local function process_addr(addr)
-            local addr_type = pandoc.utils.type(addr)
-            
-            if addr_type == 'Inlines' then
-                -- Case A: It's simple text/links -> Wrap in Para -> BlockQuote
-                table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(addr)))
-            elseif addr_type == 'Blocks' then
-                -- Case B: It contains newlines (\\) -> It's already Blocks -> Wrap in BlockQuote
-                table.insert(new_blocks, pandoc.BlockQuote(addr))
-            elseif addr_type == 'String' then
-                -- Case C: It's a raw string
-                table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(pandoc.Str(addr))))
-            else
-                -- Fallback: convert whatever it is to Blocks
-                table.insert(new_blocks, pandoc.BlockQuote(pandoc.utils.blocks(addr)))
+        local combined_inlines = {}
+        
+        -- Helper to collect all address text into one block
+        local function collect_text(addr)
+            local t = pandoc.utils.type(addr)
+            if t == 'Inlines' then
+                for _, inline in ipairs(addr) do table.insert(combined_inlines, inline) end
+                table.insert(combined_inlines, pandoc.LineBreak()) 
+            elseif t == 'List' then
+                for _, item in ipairs(addr) do collect_text(item) end
+            elseif t == 'Blocks' then
+                -- If it's already blocks (due to \\), flatten it to inlines
+                local flat = pandoc.utils.stringify(addr)
+                table.insert(combined_inlines, pandoc.Str(flat))
+                table.insert(combined_inlines, pandoc.LineBreak())
             end
         end
 
-        -- Check if address is a list (MetaList) or single item
-        if pandoc.utils.type(address) == 'List' then
-            for _, item in ipairs(address) do
-                process_addr(item)
-            end
-        else
-            process_addr(address)
+        collect_text(address)
+        
+        if #combined_inlines > 0 then
+            table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(combined_inlines)))
         end
         
-        -- Clean up metadata
         meta['address'] = nil
     end
 
     -- 3. Append the rest of the document
-    -- We use a loop to append blocks to ensure table integrity
     for _, block in ipairs(doc.blocks) do
         table.insert(new_blocks, block)
     end
