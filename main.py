@@ -107,13 +107,20 @@ class LatexConverter:
     def to_markdown(input_path: Path, output_dir: Path) -> Path:
         import pypandoc
         output_path = output_dir / "output.md"
+        filter_path = Path(__file__).parent / "resume_filter.lua"
+        
         try:
             pypandoc.convert_file(
                 str(input_path),
                 'gfm',
                 outputfile=str(output_path),
                 format='latex',
-                extra_args=['--wrap=none', f'--resource-path={input_path.parent}']
+                extra_args=[
+                    '--wrap=none',
+                    '--standalone',
+                    f'--lua-filter={filter_path}',
+                    f'--resource-path={input_path.parent}'
+                ]
             )
             return output_path
         except RuntimeError as e:
