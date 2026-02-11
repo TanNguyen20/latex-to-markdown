@@ -1,31 +1,43 @@
 -- resume_filter.lua
-function RawBlock(el)
-  -- Check if the raw block is a LaTeX command
-  if el.format == "latex" then
-    -- 1. Match \name{...}
-    local name = el.text:match("\\name%{(.-)%}")
+function Pandoc(doc)
+    local meta = doc.meta
+    local blocks = doc.blocks
+    local new_blocks = {}
+
+    -- 1. Extract NAME
+    -- Check 'name' (custom) or 'author' (standard) metadata
+    local name = meta['name'] or meta['author']
     if name then
-      -- Convert to Markdown Header 1: # Name
-      return pandoc.Header(1, pandoc.Str(name))
+        -- Create a Header Level 1 (# Name)
+        table.insert(new_blocks, pandoc.Header(1, name))
+        
+        -- IMPORTANT: Remove from metadata so the table disappears
+        meta['name'] = nil
+        meta['author'] = nil
     end
 
-    -- 2. Match \address{...}
-    local address = el.text:match("\\address%{(.-)%}")
+    -- 2. Extract ADDRESS
+    local address = meta['address']
     if address then
-      -- Clean up: replace LaTeX line break "\\" with a newline
-      address = address:gsub("\\\\", "\n")
-      -- Convert to Markdown Blockquote: > Address
-      return pandoc.BlockQuote(pandoc.Para(pandoc.Str(address)))
+        -- Address might be a list (if you used \address twice)
+        if address.t == 'MetaList' then
+            for _, addr in ipairs(address) do
+                table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(addr)))
+            end
+        else
+            -- Or just a single entry
+            table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(address)))
+        end
+        
+        -- IMPORTANT: Remove from metadata so the table disappears
+        meta['address'] = nil
     end
-  end
-end
 
--- Also catch these commands if they appear inside other blocks
-function RawInline(el)
-  if el.format == "latex" then
-    local name = el.text:match("\\name%{(.-)%}")
-    if name then
-      return pandoc.Strong(pandoc.Str(name))
+    -- 3. Append the rest of the document content
+    for _, block in ipairs(blocks) do
+        table.insert(new_blocks, block)
     end
-  end
+
+    -- Return the modified document
+    return pandoc.Pandoc(new_blocks, meta)
 end
