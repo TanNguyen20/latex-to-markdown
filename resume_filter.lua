@@ -1,17 +1,17 @@
 -- resume_filter.lua
 function Pandoc(doc)
     local meta = doc.meta
-    local blocks = doc.blocks
     local new_blocks = {}
 
     -- 1. Extract NAME
-    -- Check 'name' (custom) or 'author' (standard) metadata
+    -- Try 'name' (custom) or 'author' (standard)
     local name = meta['name'] or meta['author']
     if name then
-        -- Create a Header Level 1 (# Name)
-        table.insert(new_blocks, pandoc.Header(1, name))
+        -- stringify ensures we get clean text for the header
+        local name_text = pandoc.utils.stringify(name)
+        table.insert(new_blocks, pandoc.Header(1, name_text))
         
-        -- IMPORTANT: Remove from metadata so the table disappears
+        -- Clean up metadata
         meta['name'] = nil
         meta['author'] = nil
     end
@@ -19,25 +19,43 @@ function Pandoc(doc)
     -- 2. Extract ADDRESS
     local address = meta['address']
     if address then
-        -- Address might be a list (if you used \address twice)
-        if address.t == 'MetaList' then
-            for _, addr in ipairs(address) do
+        -- Helper function to process a single address entry
+        local function process_addr(addr)
+            local addr_type = pandoc.utils.type(addr)
+            
+            if addr_type == 'Inlines' then
+                -- Case A: It's simple text/links -> Wrap in Para -> BlockQuote
                 table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(addr)))
+            elseif addr_type == 'Blocks' then
+                -- Case B: It contains newlines (\\) -> It's already Blocks -> Wrap in BlockQuote
+                table.insert(new_blocks, pandoc.BlockQuote(addr))
+            elseif addr_type == 'String' then
+                -- Case C: It's a raw string
+                table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(pandoc.Str(addr))))
+            else
+                -- Fallback: convert whatever it is to Blocks
+                table.insert(new_blocks, pandoc.BlockQuote(pandoc.utils.blocks(addr)))
+            end
+        end
+
+        -- Check if address is a list (MetaList) or single item
+        if pandoc.utils.type(address) == 'List' then
+            for _, item in ipairs(address) do
+                process_addr(item)
             end
         else
-            -- Or just a single entry
-            table.insert(new_blocks, pandoc.BlockQuote(pandoc.Para(address)))
+            process_addr(address)
         end
         
-        -- IMPORTANT: Remove from metadata so the table disappears
+        -- Clean up metadata
         meta['address'] = nil
     end
 
-    -- 3. Append the rest of the document content
-    for _, block in ipairs(blocks) do
+    -- 3. Append the rest of the document
+    -- We use a loop to append blocks to ensure table integrity
+    for _, block in ipairs(doc.blocks) do
         table.insert(new_blocks, block)
     end
 
-    -- Return the modified document
     return pandoc.Pandoc(new_blocks, meta)
 end
