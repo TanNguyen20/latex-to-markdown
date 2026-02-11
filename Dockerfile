@@ -42,6 +42,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 8. Copy Code
+COPY resume_filter.lua .
 COPY . .
 
 # 9. Run
